@@ -68,6 +68,27 @@ Down-Up query plan would look something like this
 - Phase 1: AGGREGATION, ```Hash-Aggregate sum(v)```
 
 
+### Transformations
+
+Transformations of plans can occur in two ways
+* Without changing the tree-type
+  - Expression => Expression
+  - Logical Plan => Logical Plan 
+  - Physical Plan => Physical Plan
+* Transforming one type of tree to another
+  - Logical Plan => Physical Plan 
+
+  #### Transformation without changing tree-type
+  - 
+
+
+
+
+
+
+
+
+
 
 
 
@@ -88,3 +109,6 @@ Down-Up query plan would look something like this
 
 #### Code formatting Link:
 https://help.github.com/en/articles/creating-and-highlighting-code-blocks
+
+#### Catalyst optimizer Link:
+[![asciicast](https://spark.apache.org/images/spark-logo-trademark.png)](https://youtu.be/RmUn5vHlevc)
