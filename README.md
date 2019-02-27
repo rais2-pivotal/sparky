@@ -78,8 +78,125 @@ Transformations of plans can occur in two ways
 * Transforming one type of tree to another
   - Logical Plan => Physical Plan 
 
-  #### Transformation without changing tree-type
-  - 
+#### Transformation without changing tree-type
+  - Single transformation is done by single rule
+  - Transform is a function that can be used with an expression or with the query plan
+  
+  Here is an illustration for ```1 + 2 + t1.value```
+  
+  Expression 
+  ```sql
+                  add
+                  /^\     
+            add         attribute(t1.value)  
+            /^\                 
+  literal(1)   literal(2)
+  ```
+  
+  After first evaluation, the transformed plan would be 1 + 2 + t1.value = 3 + t1.value
+  ```sql
+                  add
+                  /^\                 
+     literal(3)          attribute(t1.value)
+  ```
+
+NOTE: This method of transforming the trees are called "constant folding". Either trees produce the same result.
+  
+- Transformation is also known as partial function, which when evaluated, is enforced or applied. 
+```java
+val expression: Expression = ...
+expression.transform {
+  case Add(Literal(x, IntegerType), Literal(y, IntegerType)) => Literal(x+y) 
+  }
+```
+- Case statement decides whether the partial function will be trigerred or skipped
+
+##### Combining Multiple Rules
+Original plan
+- Phase 5: SCAN, ```Scan(t1) and scan(t2)```
+- Phase 4: JOIN, ```JOIN t1 JOIN t2```
+- Phase 3: FILTER, ```t1.id = t2.id and t2.id > 50000```
+- Phase 2: PROJECTION, ```t1.id, 1+2+t1.value as v```
+- Phase 1: AGGREGATION, ```Aggregate sum(v)```
+
+Since the FILTER defines one of the predicates on just table "t2" via ```t2.id > 50000```, this can pushed down at the SCAN level so that less data is retrieved from SCAN. So the transformation would look something like this.
+
+Plan optimized after predicate pushdown.
+
+- Phase 5: SCAN, ```Scan(t1) and scan(t2)```
+- Phase 4: FILTER, ```FILTER t2.id > 50000 on t2```
+- Phase 3: JOIN, ```t1.id = t2.id```
+- Phase 2: PROJECTION, ```t1.id, 1+2+t1.value as v```
+- Phase 1: AGGREGATION, ```Aggregate sum(v)```
+
+
+Second rule/transformation, helps us break this down further. Since there are a total of three columns required for our query i.e. illustrated in our original query,  ```t1.id, t2.id, t1.value``` plan is further transformed.
+
+Column pruning
+- Phase 6: SCAN, ```Scan(t1) and scan(t2)```
+- Phase 5: PROJECT, ```project t1.id, t1.value``` AND ```t2.id```  
+- Phase 4: FILTER, ```FILTER t2.id > 50000 on t2```
+- Phase 3: JOIN, ```t1.id = t2.id```
+- Phase 2: PROJECTION, ```t1.id, 3 +t1.value as v```
+- Phase 1: AGGREGATION, ```Aggregate sum(v)```
+
+As projections are pushed, column pruning helps retrieve only the required columns from the SCAN i.e. Phase 5, which ensures that only relevant/less data is pushed through FILTER
+
+
+
+#### Transformation with change to the tree-type
+
+- Logical plan is transformed to a physical plan by applying set of strategies
+- Every strategy uses pattern matching to convert a logical plan to physical plan
+
+``` object BasicOperators extends Strategy {
+        def apply(plan: LogicalPlan): Seq[SparkPlan] = plan match {
+         ...
+          case logical.Project(projectList, child) =>
+             execution.ProjectExec(projectList, planLater(child)) :: Nil
+          case logical.Filter(condition, child) =>
+             execution.FilterExec(condition, planLater(child)) :: Nil
+          ... 
+          }
+        }
+```
+NOTE: "planLater" triggers multiple strategies and once combined the best transformation is used. 
+
+
+#### Catalyst Overall Execution
+
+We have reviewed all the phases involved during the Optimizer(Catalyst phase), this is represented as follows:
+
+```
+Query Plan - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -> Optimized Query Plan
+                     CATALOG
+Unresolved Logical Plan--> Logical Plan--> Optimized Logical Plan--> Physical PlanS --> Cost Model--> Selected Physical Plan                        \       /  \             /            \            /
+                      \     /    \           /              \          /
+                     Analysis   Logical Optimization       Physical Planning   
+
+```
+* Analysis(Rule Executor): Transforms an unresolved logical plan to a resolved logical plan. The process of unresolved to resolved is nothing but to use the catalog and find out where datasets and columns are coming from and what are their types
+* Logical Optimization(Rule Executor): Transforms a resolved logical plan to an optimized logical plan
+* Physical Planning (Strategies + Rule Executor)
+  - Phase 1: Transforms optimized logical plan to physical logical plan
+  - Phase 2: Rule executor is used to adjust the physical logical plan to make it ready for execution (strategizing shuffles, partitioning, types of columns to be used for partitioning etc)
+  
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
