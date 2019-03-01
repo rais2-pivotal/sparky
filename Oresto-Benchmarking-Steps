@@ -1,0 +1,42 @@
+Initial setup:
+
+Should generate the dsdgen in one node and copied in all the other node in same path:
+
+Here are the steps :
+	1)	Wget https://github.com/databricks/tpcds-kit/archive/master.zip
+	2)	Unzip master.zip
+	3)	sudo yum install gcc make flex bison byacc
+	4)	cd ./tpcds-kit-master/tools
+	5)	make OS=LINUX
+	6)	mv ./ tpcds-kit-master /tmp
+
+Now tpcds-kit-master folder need to be copied to all the worker nodes. for that use --archives option of spark-submit
+
+Here are the steps to copy tpcds-kit-master folder to all the worker nodes.
+	1) change tpcds-kit-master folder files permission to 755
+		CMD: chmod -R 755 tpcds-kit-master
+	2) zip tpcds-kit-master foler to tpcds-kit-master.zip file
+		CMD: zip tpcds-kit-master.zip tpcds-kit-master
+	3) copy tpcds-kit-master.zip file to some HDFS location.
+
+	4) while Submitting spark job using spark-submit, provide the HDFS_location including filename of tpcds-kit-master.zip in --archives option
+
+
+If your cluster is kerberos secured then we need to copy keytab file in all the worker node. for that we will follow the same step as above
+Steps:
+	1) zip adaingtst.keytab file to adaingtst.keytab.zip file
+		CMD: zip adaingtst.keytab.zip adaingtst.keytab
+	2) copy adaingtst.keytab.zip file top some HDFS location
+		3) while Submitting spark job using spark-submit, provide the HDFS_location including filename of adaingtst.keytab.zip in --archives option
+
+
+spark-submit command sample to execute the Job:
+
+	nohup  time spark2-submit --master yarn --executor-memory 20g --driver-memory 30g --executor-cores 2 --jars scala-logging-api_2.11-2.1.2.jar,scala-logging-slf4j_2.11-2.1.2.jar,spark-sql-perf_2.11-0.5.0-SNAPSHOT.jar --keytab /var/tmp/adaingtst.keytab --principal adaingtst@SVCSUAT.DBS.COM --driver-java-options "-Dalluxio.security.kerberos.client.principal=adaingtst@SVCSUAT.DBS.COM -Dalluxio.security.kerberos.client.keytab.file=/var/tmp/adaingtst.keytab" --conf 'spark.driver.extraJavaOptions=-Dalluxio.user.file.writetype.default=CACHE_THROUGH' --conf 'spark.executor.extraJavaOptions=-Dalluxio.security.kerberos.client.principal=adaingtst@SVCSUAT.DBS.COM -Dalluxio.security.kerberos.client.keytab.file=adaingtst.keytab.zip/adaingtst.keytab' --archives hdfs://hanameservice/tmp/spark_benchmarking/tpcds-kit-master.zip,hdfs://hanameservice/tmp/spark_benchmarking/adaingtst.keytab.zip --class com.dbs.dp.benchmark.SqlBenchObj spark-sql-1.0-SNAPSHOT.jar "alluxio:///user/adaingtst/US_4272/1TB/input1" "adaingtst" "alluxio:///user/adaingtst/US_4272/1TB/result" "alluxio:///user/adaingtst/US_4272/1TB/output" "1024" &
+
+	Input argumets are :
+	1 --input dir location to generate the data. (will be created automatically)
+	2 – hive database name. (we should create before running).
+	3 – result location path. (will be created automatically)
+	4—Benchmark Final Output location. (will be created automatically)
+	5—Size of input data (should be in number format 1 means 1gb)
