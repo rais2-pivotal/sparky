@@ -17,4 +17,13 @@ DECOMPRESS ('1','9'): Opposite of Compress !!
 TD: BUSINESS_DATE DATE FORMAT 'YYYY-MM-DD' 
 Presto: BUSINESS_DATE DATE FORMAT '%Y-%m-%d' 
 
-#### DATE
+#### Characters
+TD: VARCHAR/CHAR
+Presto: VARCHAR/CHAR
+
+#### Numbers
+TD: DECIMAL
+Presto: DECIMAL
+
+
+
