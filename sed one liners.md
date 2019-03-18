@@ -8,4 +8,6 @@ this is really BLAH
 ```
 
 #### Perl script to get rid of 'c' style comments '/* and */'
+```
 perl -0777 -pe 's,/\*.*?\*/,,gs' oia_2_cdm_loading.txt
+```
