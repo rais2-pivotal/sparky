@@ -1,0 +1,234 @@
+#!/usr/bin/perl
+#
+# A pattern matching tool for jstack output. Can search for a pattern in the stacktraces,
+# then show details of just the matching threads, either showing all of the stacktrace or
+# just lines matching the search pattern, or matching any other patterns.
+#
+# For example, to see which threads are currently accessing the database and show the
+# stacktrace lines containing your own classes:
+# jstack-grep postgres <pid> -i com.xk72
+#
+# Instead of <pid> you can specify -, in which case the jstack output is read from stdin.
+# Or you can specify a filename to read the jstack output from. The filename must not be
+# a number, as that will be interpreted as a pid.
+#
+# Karl von Randow, 2013.
+
+use Getopt::Long;
+use Scalar::Util qw(looks_like_number);
+
+my $JSTACK="jstack";
+
+# Options
+my $full = 0;
+my @interest;
+my @andMatches;
+my @orMatches;
+my $caseSensitive = 0;
+
+# Command line arguments
+sub usage {
+	print "usage: $0 [-f] [-i <pattern>] [-n] <pattern> [-o <pattern>] [-a <pattern>] <pid | - | filename>\n";
+	print "    -f Show full stacktraces.\n";
+	print "    -i <pattern> Only show stacktrace lines matching pattern.\n";
+	print "                 Can be specified multiple times.\n";
+	print "    -n Turn off case-insensitive pattern matching.\n";
+	print "    -o <pattern> Additional patterns that _may_ match.\n";
+	print "                 Can be specified multiple times.\n";
+	print "    -a <pattern> Additional patterns that _must_ match.\n";
+	print "                 Can be specified multiple times.\n";
+	print "\n";
+	print "If no -i options are specified, defaults to showing lines matching the search\n";
+	print "pattern and any -o and -a patterns.\n\n";
+	print "Matching is case-insensitive by default.\n\n";
+	print "Matches the search pattern, or any or the -o patterns. Then ensures that all\n";
+	print "of the -a patterns match.\n";
+	exit(1);
+}
+
+GetOptions (
+	"full" => \$full,
+	"interest=s" => \@interest,
+	"n" => \$caseSensitive,
+	"and=s" => \@andMatches,
+	"or=s" => \@orMatches
+) or usage();
+
+my ($regex, $pid, $additional) = @ARGV;
+
+if (!defined($regex) || !defined($pid)) {
+	usage();
+} elsif (defined($additional)) {
+	print("Too many command line arguments.\n");
+	usage();
+}
+
+push(@orMatches, $regex);
+
+if ($#interest == -1) {
+	push(@interest, @orMatches);
+	push(@interest, @andMatches);
+}
+
+# Read output from jstack
+my $OUTPUT;
+
+if (looks_like_number($pid)) {
+	$OUTPUT = `$JSTACK $pid` || die ("Failed to run jstack\n");
+} elsif ($pid eq "-") {
+	local $/;
+	$OUTPUT = <STDIN>;
+} elsif (-f $pid) {
+	open(FILE, $pid) or die("Can't read file: $pid\n");
+	local $/;
+	$OUTPUT = <FILE>;
+	close(FILE);
+}
+
+# Break into stacks
+my @threads = ();
+my $currentStack = [];
+
+sub pushStack {
+	my ($currentStack) = @_;
+	my $thread = shift @$currentStack;
+	my $state = shift @$currentStack;
+
+	# Trim whitespace
+	$thread =~ s/^\s*(.*?)\s*$/$1/;
+	$state =~ s/^\s*(.*?)\s*$/$1/;
+
+	push(@threads, { name => $thread, state => $state, stack => $currentStack });
+};
+
+for (split /^/, $OUTPUT) {
+	chomp;
+	if ($_ eq "") {
+		pushStack($currentStack);
+		$currentStack = [];
+	} else {
+		# Trim whitespace
+		$_ =~ s/^\s*(.*?)\s*$/$1/;
+		push(@$currentStack, $_);
+	}
+}
+
+pushStack($currentStack);
+
+# Skip first stack as it's a header
+shift @threads;
+
+# Search stacks
+sub testRegex {
+	my ($context, $regex) = @_;
+	if (!$caseSensitive) {
+		return $context =~ /$regex/i;
+	} else {
+		return $context =~ /$regex/;
+	}
+}
+
+sub testMatchOrs {
+	my ($context) = @_;
+	
+	foreach my $regex (@orMatches) {
+		return 1 if (testRegex($context, $regex));
+	}
+
+	return 0;
+}
+
+sub testMatchAnds {
+	my ($context) = @_;
+
+	my $matches = 0;
+	foreach my $regex (@andMatches) {
+		return 1 if (testRegex($context, $regex));
+	}
+
+	return 0;
+}
+
+my @matches = ();
+OUTER: foreach my $thread (@threads) {
+	my $name = $thread->{name};
+	my $state = $thread->{state};
+	my $stack = $thread->{stack};
+
+	if (@andMatches) {
+		ANDMATCHES: foreach my $regex (@andMatches) {
+			if (testRegex($name, $regex) || testRegex($state, $regex)) {
+				next;
+			} else {
+				foreach my $line (@$stack) {
+					if (testRegex($line, $regex)) {
+						next ANDMATCHES;
+					}
+				}
+			}
+
+			# No match
+			next OUTER;
+		}
+	}
+
+	if (testMatchOrs($name) || testMatchOrs($state)) {
+		push(@matches, $thread);
+		next;
+	}
+
+	foreach my $line (@$stack) {
+		if (testMatchOrs($line)) {
+			push(@matches, $thread);
+			last;
+			#print "$name: $line\n";
+		}
+	}
+}
+
+# Present matches
+print STDERR "Found " . ($#matches + 1) . " threads.\n";
+
+sub testInteresting {
+	my ($context) = @_;
+
+	foreach my $i (@interest) {
+		if (!$caseSensitive) {
+			return 1 if $context =~ /$i/i;
+		} else {
+			return 1 if $context =~ /$i/;
+		}
+	}
+	return 0;
+}
+
+my $index = 0;
+foreach my $thread (@matches) {
+	my $name = $thread->{name};
+	my $state = $thread->{state};
+	my $stack = $thread->{stack};
+
+	print "\n" unless $index == 0;
+	
+	print "$name\n";
+	if (length($state) > 0) {
+		print "State: $state\n";
+	}
+
+	my $ellipsis = 0;
+	foreach my $line (@$stack) {
+		my $interesting = testInteresting($line);
+		if ($interesting && $full) {
+			print "*   $line\n";
+			$ellipsis = 0;
+		} elsif ($interesting || $full) {
+			print "    $line\n";
+			$ellipsis = 0;
+		} elsif (!$ellipsis) {
+			print "    ...\n";
+			$ellipsis = 1;
+		}
+	}
+
+	$index++;
+}
